@@ -1,0 +1,16 @@
+# Build output
+*.exe
+*.o
+*.obj
+*.res
+*.pdb
+*.ilk
+build/
+dist/
+
+# Editor / OS
+.vs/
+.vscode/
+*.user
+Thumbs.db
+.DS_Store
