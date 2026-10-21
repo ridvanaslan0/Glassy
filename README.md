@@ -4,7 +4,7 @@ A tiny, fast, round screen magnifier for Windows with a **liquid glass** edge.
 Press a hotkey, a glass lens follows your cursor, scroll the mouse wheel to zoom.
 Inspired by the image zoom plugin in [Vencord](https://github.com/Vendicated/Vencord/tree/main/src/plugins/imageZoom), but it works everywhere on your screen.
 
-[![Build](https://github.com/YOUR_USERNAME/glassy/actions/workflows/build.yml/badge.svg)](https://github.com/YOUR_USERNAME/glassy/actions/workflows/build.yml)
+[![Build](https://github.com/ridvanaslan0/glassy/actions/workflows/build.yml/badge.svg)](https://github.com/ridvanaslan0/glassy/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ![Glassy lens preview](docs/preview.png)
@@ -26,7 +26,7 @@ Inspired by the image zoom plugin in [Vencord](https://github.com/Vendicated/Ven
 
 ## Install
 
-1. Download `Glassy-vX.Y.Z-win-x64.zip` from the [Releases](https://github.com/YOUR_USERNAME/glassy/releases) page.
+1. Download `Glassy-vX.Y.Z-win-x64.zip` from the [Releases](https://github.com/ridvanaslan0/glassy/releases) page.
 2. Extract it and run `Glassy.exe`. There is no installer.
 3. Look for the Glassy icon in the system tray (it may be inside the `^` overflow menu).
 
