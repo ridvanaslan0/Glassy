@@ -2,7 +2,6 @@
 
 A tiny, fast, round screen magnifier for Windows with a **liquid glass** edge.
 Press a hotkey, a glass lens follows your cursor, scroll the mouse wheel to zoom.
-Inspired by the image zoom plugin in [Vencord](https://github.com/Vendicated/Vencord/tree/main/src/plugins/imageZoom), but it works everywhere on your screen.
 
 [![Build](https://github.com/ridvanaslan0/glassy/actions/workflows/build.yml/badge.svg)](https://github.com/ridvanaslan0/glassy/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
