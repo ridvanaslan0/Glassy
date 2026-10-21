@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
-## [1.0.0] - 2026-10-21
+## [2.0.0] - 2026-10-21
 
 First public release.
 
@@ -19,4 +19,4 @@ First public release.
 - Persistent settings stored in `HKEY_CURRENT_USER\Software\Glassy`.
 - Build scripts for MinGW-w64 and GitHub Actions workflows for CI and releases.
 
-[1.0.0]: https://github.com/YOUR_USERNAME/glassy/releases/tag/v1.0.0
+[2.0.0]: https://github.com/ridvanaslan0/Glassy/releases/tag/v2.0.0

@@ -1,7 +1,7 @@
 # Prebuilt binary
 
 `Glassy.exe` is a prebuilt 64-bit Windows executable of the current source, kept here so you can attach it to a GitHub Release by hand.
-Normally you do not need to: pushing a version tag (for example `v1.0.0`) makes the release workflow build it and publish a Release automatically.
+Normally you do not need to: pushing a version tag (for example `v2.0.0`) makes the release workflow build it and publish a Release automatically.
 
 Verify a download:
 

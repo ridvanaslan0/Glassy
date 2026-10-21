@@ -1,4 +1,4 @@
-## Glassy v1.0.0
+## Glassy v2.0.0
 
 First public release: a tiny round screen magnifier for Windows with a liquid glass edge.
 
