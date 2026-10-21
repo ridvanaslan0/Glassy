@@ -1,16 +1,13 @@
 # Build output
-*.exe
+build/
 *.o
 *.obj
-*.res
-*.pdb
-*.ilk
-build/
-dist/
+*.exe
+!release/Glassy.exe
 
-# Editor / OS
-.vs/
+# Editors and OS
 .vscode/
-*.user
-Thumbs.db
+.idea/
+*.swp
 .DS_Store
+Thumbs.db

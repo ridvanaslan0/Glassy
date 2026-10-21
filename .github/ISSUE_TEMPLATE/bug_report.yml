@@ -1,0 +1,42 @@
+name: Bug report
+description: Something is not working as expected
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Glassy version
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 23H2"
+    validations:
+      required: true
+  - type: input
+    id: display
+    attributes:
+      label: Display setup
+      description: Resolution, scaling and number of monitors
+      placeholder: "2560x1440 at 125%, two monitors"
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Press Ctrl+Alt+Z
+        2. ...
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or extra info

@@ -1,0 +1,29 @@
+#include <winver.h>
+
+// Application manifest (DPI awareness, visual styles)
+1 24 "glassy.manifest"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "ProductName",      "Glassy"
+      VALUE "FileDescription",  "Glassy - liquid glass screen magnifier"
+      VALUE "FileVersion",      "1.0.0"
+      VALUE "ProductVersion",   "1.0.0"
+      VALUE "OriginalFilename", "Glassy.exe"
+      VALUE "InternalName",     "Glassy"
+      VALUE "LegalCopyright",   "MIT License"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END

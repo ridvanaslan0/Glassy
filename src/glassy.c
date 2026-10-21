@@ -1,14 +1,16 @@
-// Glassy v1.1 - round screen magnifier (Win32 / C, no dependencies)
+// Glassy v1.0.0 - a round "liquid glass" screen magnifier for Windows (Win32 / C, no dependencies)
 //
-// Hotkey: Ctrl+Alt+Z -> toggle on/off
-// While active: Wheel = zoom, Shift+Wheel = lens size
-// Tray icon: left click = toggle, right click = menu (Settings, size, startup, exit)
+// Hotkey:      Ctrl+Alt+Z toggles the lens on/off
+// While on:    Mouse wheel = zoom, Shift+Wheel = lens size
+// Tray icon:   left click = toggle, right click = menu (settings, size, startup, exit)
 //
-// Architecture (to avoid lag):
-//  - Hook thread : only captures mouse events, never draws (the mouse never stutters)
-//  - Lens thread : capture -> liquid glass scaling -> UpdateLayeredWindow (position + image in one step),
-//                  synced to the display refresh with DwmFlush, does not draw if nothing changed
-//  - Main thread  : tray, hotkey, notification, settings window
+// Architecture (designed to stay lag-free):
+//  - Hook thread : only listens for mouse wheel events, never draws (the mouse can never stall)
+//  - Lens thread : capture -> liquid-glass scaling -> UpdateLayeredWindow (position + image in one step),
+//                  paced by DwmFlush to the display refresh, skips drawing when nothing changed
+//  - Main thread : tray icon, hotkey, toast notification, settings window
+//
+// License: MIT
 
 #ifndef UNICODE
 #define UNICODE
@@ -34,7 +36,7 @@
 #define CAPTUREBLT 0x40000000
 #endif
 
-// ---- Defaults -------------------------------------------------
+// ---- Defaults ------------------------------------------------------
 #define HOTKEY_MOD   (MOD_CONTROL | MOD_ALT | MOD_NOREPEAT)
 #define HOTKEY_VK    'Z'
 #define ZOOM_MIN_Q   1250      // 1.25x (x1000)
@@ -87,13 +89,13 @@ static volatile LONG g_visible;
 static volatile LONG g_size    = LENS_DEF;
 static volatile LONG g_zoomQ   = ZOOM_DEF_Q;
 static volatile LONG g_ctrlOnly = 0;
-static volatile LONG g_hideCap = 0;   // 1: hide the lens from screenshots / screen sharing
+static volatile LONG g_hideCap = 0;   // 1: hide the lens from screenshots/streams
 static BOOL g_toastOn;
 static int  g_toastAlpha;
 static UINT g_wmTaskbar;
 static NOTIFYICONDATAW g_nid;
 
-// ====================== Registry (settings + startup) ==========
+// ====================== Registry (settings + startup) =================
 static BOOL StartupEnabled(void) {
     HKEY k; BOOL ok = FALSE;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_READ, &k) == ERROR_SUCCESS) {
@@ -125,7 +127,7 @@ static LONG Clamp(LONG v, LONG lo, LONG hi) { return v < lo ? lo : (v > hi ? hi 
 static void LoadSettings(void) {
     HKEY k; DWORD disp;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, APP_KEY, 0, NULL, 0, KEY_READ | KEY_WRITE, NULL, &k, &disp) != ERROR_SUCCESS) return;
-    if (disp == REG_CREATED_NEW_KEY) SetStartup(TRUE);        // add to startup on first run
+    if (disp == REG_CREATED_NEW_KEY) SetStartup(TRUE);        // enable autostart on first run
     g_size     = Clamp((LONG)GetDw(k, L"Size", LENS_DEF), LENS_MIN, LENS_MAX);
     g_zoomQ    = Clamp((LONG)GetDw(k, L"ZoomQ", ZOOM_DEF_Q), ZOOM_MIN_Q, ZOOM_MAX_Q);
     g_ctrlOnly = GetDw(k, L"CtrlOnly", 0) ? 1 : 0;
@@ -142,14 +144,14 @@ static void SaveSettings(void) {
     RegCloseKey(k);
 }
 
-// ====================== Hook thread (mouse events only) ===========
+// ====================== Hook thread (mouse events only) ==============
 static HHOOK g_hook;
 
 static LRESULT CALLBACK MouseProc(int c, WPARAM w, LPARAM l) {
     if (c == HC_ACTION) {
         if (w == WM_MOUSEWHEEL) {
             if (g_ctrlOnly && !(GetAsyncKeyState(VK_CONTROL) & 0x8000))
-                return CallNextHookEx(NULL, c, w, l);          // no Ctrl: normal scrolling
+                return CallNextHookEx(NULL, c, w, l);          // no Ctrl: let the wheel scroll normally
             MSLLHOOKSTRUCT *m = (MSLLHOOKSTRUCT *)l;
             short d = (short)HIWORD(m->mouseData);
             if (GetAsyncKeyState(VK_SHIFT) & 0x8000) {
@@ -182,14 +184,14 @@ static DWORD WINAPI HookThread(LPVOID p) {
     return 0;
 }
 
-// ====================== Lens thread (drawing + liquid glass) ===========
+// ====================== Lens thread (rendering + liquid glass) =======
 // GLASS-BEGIN
-// Liquid glass: light refraction at the edge, chromatic aberration,
-// bright specular rim, soft reflection and inner shadow. All the heavy math is done once
-// into lookup tables when the size changes; each frame only does sampling + blending.
+// Liquid glass: light refraction at the edge, chromatic aberration, a bright specular rim,
+// a soft glint and an inner shadow. All heavy math is precomputed into tables whenever the
+// size changes; every frame only does sampling + blending.
 #define GL_K      0.45f    // edge refraction strength
 #define GL_R0     0.70f    // radius ratio where the refraction band starts
-#define GL_CA_R0  0.86f    // chromatic aberration start
+#define GL_CA_R0  0.86f    // chromatic aberration start radius
 #define GL_CA     0.050f   // chromatic aberration strength
 
 static int g_gsz;
@@ -198,7 +200,8 @@ static int16_t *g_offG, *g_offR, *g_offB;
 
 static float sstep(float a, float b, float x) {
     float t = (x - a) / (b - a);
-    if (t < 0) t = 0; if (t > 1) t = 1;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
     return t * t * (3.f - 2.f * t);
 }
 static float clamp01(float v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
@@ -216,16 +219,16 @@ static void GlassBuild(int sz) {
     g_offR = (int16_t *)malloc(n * 2 * sizeof(int16_t));
     g_offB = (int16_t *)malloc(n * 2 * sizeof(int16_t));
     float R = sz / 2.0f;
-    const float lx = -0.70710678f, ly = -0.70710678f;           // light comes from the top left
+    const float lx = -0.70710678f, ly = -0.70710678f;           // light comes from the top-left
     for (int y = 0; y < sz; y++) {
         for (int x = 0; x < sz; x++) {
             size_t i = (size_t)y * sz + x;
             float nx = (x + 0.5f - R) / R, ny = (y + 0.5f - R) / R;
             float r = sqrtf(nx * nx + ny * ny);
-            float dist = (1.f - r) * R;                         // pixels from the edge inward
+            float dist = (1.f - r) * R;                         // pixels inward from the edge
             g_cov[i] = (uint8_t)(clamp01(dist + 0.5f) * 255.f + 0.5f);
 
-            // --- refraction: near the edge a wider area appears compressed
+            // --- refraction: a wider area gets squeezed in near the edge
             float rr = r > 1.f ? 1.f : r;
             float t = sstep(GL_R0, 1.f, rr);
             float f = 1.f + GL_K * t * t;
@@ -240,7 +243,7 @@ static void GlassBuild(int sz) {
             g_offB[2 * i]     = (int16_t)lrintf(ox * fb * 4096.f);
             g_offB[2 * i + 1] = (int16_t)lrintf(oy * fb * 4096.f);
 
-            // --- light: direction-dependent brightness along the edge (top left + weak bottom right)
+            // --- light: direction-dependent brightness along the edge (strong top-left, weak bottom-right)
             float cosl = r > 1e-4f ? (nx * lx + ny * ly) / r : 0.f;
             float I1 = cosl > 0 ? cosl * cosl : 0.f;
             float I2 = cosl < 0 ? cosl * cosl : 0.f;
@@ -252,11 +255,11 @@ static void GlassBuild(int sz) {
             float sheen = sstep(0.80f, 1.f, rr) * (0.05f + 0.20f * fmaxf(I1, 0.6f * I2));
             aw = 1.f - (1.f - aw) * (1.f - sheen);
             float gx = nx + 0.38f, gy = ny + 0.52f;
-            float glint = 0.09f * expf(-(gx * gx + gy * gy) * 9.f);   // soft reflection at the top left
+            float glint = 0.09f * expf(-(gx * gx + gy * gy) * 9.f);   // soft glint at the top-left
             aw = 1.f - (1.f - aw) * (1.f - glint);
 
             float d2 = dist - 5.5f;
-            float inner = expf(-(d2 * d2) / 12.5f) * 0.10f * (1.f - I1); // thin shadow just inside the edge
+            float inner = expf(-(d2 * d2) / 12.5f) * 0.10f * (1.f - I1); // thin shadow just inside the rim
             float ak = inner + 0.10f * sstep(0.82f, 1.f, rr) * (1.f - I1);
             g_aw[i] = (uint8_t)(clamp01(aw) * 255.f + 0.5f);
             g_ak[i] = (uint8_t)(clamp01(ak) * 255.f + 0.5f);
@@ -279,7 +282,7 @@ static inline uint32_t bilin(const uint32_t *s, int stride, int lim, int X, int 
     return lerp32(lerp32(r0[0], r0[1], fx), lerp32(r1[0], r1[1], fx), fy);
 }
 
-// src: captured area of sc x sc pixels (center = cursor), sw: source width covered by the lens
+// src: captured sc x sc pixel area (center = cursor), sw: source width covered by the lens
 static void GlassRender(const uint32_t *src, int stride, int sc, int sw, uint32_t *out) {
     size_t n = (size_t)g_gsz * g_gsz;
     int cfp = (sc / 2) << 16;
@@ -339,7 +342,7 @@ static void LensRender(void) {
     double z = zq / 1000.0;
     int sw = (int)(sz / z + 0.5);
     if (sw < 1) sw = 1;
-    int sc = (int)(sw * 1.5) + 4;                               // extra margin at the edge for refraction
+    int sc = (int)(sw * 1.5) + 4;                               // extra margin for edge refraction
     if (sc > MAXSRC) sc = MAXSRC;
 
     HDC scr = GetDC(NULL);
@@ -347,7 +350,7 @@ static void LensRender(void) {
     ReleaseDC(NULL, scr);
     GdiFlush();
 
-    // if nothing changed (cursor, settings, screen content), don't redraw -> ~0 CPU when idle
+    // skip drawing if nothing changed (cursor, settings, screen content) -> ~0 CPU when idle
     int same = !g_dirty && p.x == g_kx && p.y == g_ky && sz == g_ksz && zq == g_kzq && sc == g_ksc;
     if (same) {
         for (int y = 0; y < sc; y++)
@@ -395,8 +398,8 @@ static DWORD WINAPI LensThread(LPVOID p) {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
     g_lens = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
                              L"GlassyLens", L"", WS_POPUP, 0, 0, LENS_DEF, LENS_DEF, NULL, NULL, g_inst, NULL);
-    // Default: the lens IS VISIBLE in screen sharing / screenshots. Since our own capture does not use CAPTUREBLT,
-    // it already skips layered lens windows, so there is no feedback loop.
+    // Default: the lens IS visible in streams and screenshots. Our own capture does not use CAPTUREBLT,
+    // so it skips layered windows (including the lens) and no feedback loop can occur.
     SetWindowDisplayAffinity(g_lens, g_hideCap ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE);
 
     g_dcLens = CreateCompatibleDC(NULL);
@@ -414,7 +417,7 @@ static DWORD WINAPI LensThread(LPVOID p) {
     ULONGLONG lastTop = 0;
     MSG m;
     for (;;) {
-        if (!g_visible) MsgWaitForMultipleObjects(0, NULL, FALSE, INFINITE, QS_ALLINPUT);   // sleep while off
+        if (!g_visible) MsgWaitForMultipleObjects(0, NULL, FALSE, INFINITE, QS_ALLINPUT);   // sleep while hidden
         while (PeekMessageW(&m, NULL, 0, 0, PM_REMOVE)) {
             if (m.message == WM_QUIT) return 0;
             TranslateMessage(&m); DispatchMessageW(&m);
@@ -422,16 +425,16 @@ static DWORD WINAPI LensThread(LPVOID p) {
         if (g_visible) {
             LensRender();
             ULONGLONG now = GetTickCount64();
-            if (now - lastTop > 500) {                          // if another topmost window covers us, reclaim the top
+            if (now - lastTop > 500) {                          // reclaim the top spot if another topmost window covers us
                 SetWindowPos(g_lens, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
                 lastTop = now;
             }
-            if (FAILED(DwmFlush())) Sleep(8);                   // synced with display refresh (60/144 Hz)
+            if (FAILED(DwmFlush())) Sleep(8);                   // sync to the display refresh (60/144 Hz)
         }
     }
 }
 
-// ====================== Notification (toast) =============================
+// ====================== Notification (toast) ==========================
 static void ShowToast(BOOL on) {
     g_toastOn = on;
     KillTimer(g_main, T_TOASTHIDE); KillTimer(g_main, T_FADE);
@@ -465,7 +468,7 @@ static LRESULT CALLBACK ToastProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         HGDIOBJ of = SelectObject(dc, f);
         SetBkMode(dc, TRANSPARENT); SetTextColor(dc, RGB(255, 255, 255));
         RECT tr = { 54, 0, r.right - 10, r.bottom };
-        DrawTextW(dc, g_toastOn ? L"Magnifier ON" : L"Magnifier OFF", -1, &tr,
+        DrawTextW(dc, g_toastOn ? L"Glassy ON" : L"Glassy OFF", -1, &tr,
                   DT_SINGLELINE | DT_VCENTER | DT_LEFT);
         SelectObject(dc, of); DeleteObject(f);
         EndPaint(h, &ps);
@@ -474,7 +477,7 @@ static LRESULT CALLBACK ToastProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcW(h, m, w, l);
 }
 
-// ====================== Toggle ===================================
+// ====================== Toggle ========================================
 static void SetActive(BOOL on) {
     if ((BOOL)g_active == on) return;
     InterlockedExchange(&g_active, on);
@@ -484,12 +487,12 @@ static void SetActive(BOOL on) {
     } else {
         PostThreadMessageW(g_hookTid, WM_HOOK_OFF, 0, 0);
         PostMessageW(g_lens, WM_LENS_HIDE, 0, 0);
-        SaveSettings();                                         // also save the size changed with Shift+wheel
+        SaveSettings();                                         // also persist a size changed with Shift+wheel
     }
     ShowToast(on);
 }
 
-// ====================== Settings window ============================
+// ====================== Settings window ===============================
 static HWND g_tbSize, g_tbZoom, g_lblSize, g_lblZoom, g_chkStart, g_chkCtrl, g_chkCap;
 static HFONT g_font;
 
@@ -498,7 +501,7 @@ static void UpdateLabels(void) {
     wsprintfW(b, L"Lens size: %d px", (int)g_size);
     SetWindowTextW(g_lblSize, b);
     int zq = (int)g_zoomQ;
-    wsprintfW(b, L"Zoom: %d.%02dx", zq / 1000, (zq % 1000) / 10);
+    wsprintfW(b, L"Zoom level: %d.%02dx", zq / 1000, (zq % 1000) / 10);
     SetWindowTextW(g_lblZoom, b);
 }
 static void ApplySize(int s) {
@@ -574,25 +577,25 @@ static void OpenSettings(void) {
     g_lblZoom = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE, S(20), S(92), S(360), S(22), hw, NULL, g_inst, NULL);
     g_tbZoom  = CreateWindowExW(0, TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_AUTOTICKS,
                                 S(14), S(116), S(372), S(34), hw, (HMENU)ID_TBZOOM, g_inst, NULL);
-    SendMessageW(g_tbZoom, TBM_SETRANGE, TRUE, MAKELONG(5, 80));       // 1.25x .. 20x (0.25 step)
+    SendMessageW(g_tbZoom, TBM_SETRANGE, TRUE, MAKELONG(5, 80));       // 1.25x .. 20x (0.25 steps)
     SendMessageW(g_tbZoom, TBM_SETTICFREQ, 4, 0);
     SendMessageW(g_tbZoom, TBM_SETLINESIZE, 0, 1);
     SendMessageW(g_tbZoom, TBM_SETPAGESIZE, 0, 4);
     SendMessageW(g_tbZoom, TBM_SETPOS, TRUE, g_zoomQ / 250);
 
-    g_chkStart = CreateWindowExW(0, L"BUTTON", L"Start automatically with Windows",
+    g_chkStart = CreateWindowExW(0, L"BUTTON", L"Run at Windows startup",
                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, S(20), S(168), S(360), S(24), hw, (HMENU)ID_CHKSTART, g_inst, NULL);
     SendMessageW(g_chkStart, BM_SETCHECK, StartupEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
     g_chkCtrl = CreateWindowExW(0, L"BUTTON", L"Zoom with the wheel only while Ctrl is held",
                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, S(20), S(198), S(360), S(24), hw, (HMENU)ID_CHKCTRL, g_inst, NULL);
     SendMessageW(g_chkCtrl, BM_SETCHECK, g_ctrlOnly ? BST_CHECKED : BST_UNCHECKED, 0);
 
-    g_chkCap = CreateWindowExW(0, L"BUTTON", L"Show lens in screenshots / screen sharing",
+    g_chkCap = CreateWindowExW(0, L"BUTTON", L"Show the lens in screenshots and streams",
                                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, S(20), S(226), S(360), S(24), hw, (HMENU)ID_CHKCAP, g_inst, NULL);
     SendMessageW(g_chkCap, BM_SETCHECK, g_hideCap ? BST_UNCHECKED : BST_CHECKED, 0);
-    CreateWindowExW(0, L"STATIC", L"Hotkey: Ctrl+Alt+Z (toggle)\nWhile active, Shift+Wheel: lens size",
+    CreateWindowExW(0, L"STATIC", L"Hotkey: Ctrl+Alt+Z (toggle)\nWhile active: Shift+Wheel changes the lens size",
                     WS_CHILD | WS_VISIBLE, S(20), S(258), S(360), S(40), hw, NULL, g_inst, NULL);
-    CreateWindowExW(0, L"BUTTON", L"Test (on / off)", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+    CreateWindowExW(0, L"BUTTON", L"Try it (toggle)", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
                     S(20), S(304), S(170), S(32), hw, (HMENU)ID_BTNTEST, g_inst, NULL);
     CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                     S(210), S(304), S(170), S(32), hw, (HMENU)ID_BTNCLOSE, g_inst, NULL);
@@ -605,7 +608,7 @@ static void OpenSettings(void) {
 #undef S
 }
 
-// ====================== Tray icon ==================================
+// ====================== Tray icon =====================================
 static HICON MakeIcon(void) {
     HDC sdc = GetDC(NULL); HDC m = CreateCompatibleDC(sdc);
     HBITMAP color = CreateCompatibleBitmap(sdc, 32, 32);
@@ -630,7 +633,7 @@ static void AddTray(void) {
     g_nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAY;
     if (!g_nid.hIcon) g_nid.hIcon = MakeIcon();
-    lstrcpyW(g_nid.szTip, L"Magnifier (Ctrl+Alt+Z)");
+    lstrcpyW(g_nid.szTip, L"Glassy (Ctrl+Alt+Z)");
     Shell_NotifyIconW(NIM_ADD, &g_nid);
 }
 static void TrayMenu(void) {
@@ -662,9 +665,9 @@ static void TrayMenu(void) {
     }
 }
 
-// ====================== Main window ==================================
+// ====================== Main window ===================================
 static LRESULT CALLBACK MainProc(HWND h, UINT m, WPARAM w, LPARAM l) {
-    if (m == g_wmTaskbar) { AddTray(); return 0; }              // if Explorer restarted, put the icon back
+    if (m == g_wmTaskbar) { AddTray(); return 0; }              // re-add the tray icon if Explorer restarted
     switch (m) {
     case WM_HOTKEY: SetActive(!g_active); return 0;
     case WM_TIMER:
