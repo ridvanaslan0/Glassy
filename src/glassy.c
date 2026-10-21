@@ -1,4 +1,4 @@
-// Glassy v1.5.0 - a round "liquid glass" screen magnifier for Windows (Win32 / C, no dependencies)
+// Glassy v2.0.1 - a round "liquid glass" screen magnifier for Windows (Win32 / C, no dependencies)
 //
 // Hotkey:      Ctrl+Alt+Z toggles the lens on/off
 // While on:    Mouse wheel = zoom, Shift+Wheel = lens size
@@ -32,9 +32,6 @@
 #ifndef WDA_EXCLUDEFROMCAPTURE
 #define WDA_EXCLUDEFROMCAPTURE 0x11
 #endif
-#ifndef CAPTUREBLT
-#define CAPTUREBLT 0x40000000
-#endif
 
 // ---- Defaults ------------------------------------------------------
 #define HOTKEY_MOD   (MOD_CONTROL | MOD_ALT | MOD_NOREPEAT)
@@ -55,7 +52,6 @@
 #define WM_HOOK_OFF   (WM_APP + 21)
 #define WM_LENS_SHOW  (WM_APP + 30)
 #define WM_LENS_HIDE  (WM_APP + 31)
-#define WM_LENS_AFFIN (WM_APP + 32)
 #define ID_TRAY       1
 #define ID_HOTKEY     1
 #define IDM_TOGGLE    100
@@ -71,7 +67,6 @@
 #define ID_CHKCTRL    213
 #define ID_BTNTEST    214
 #define ID_BTNCLOSE   215
-#define ID_CHKCAP     216
 
 static const wchar_t *RUN_KEY  = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 static const wchar_t *APP_KEY  = L"Software\\Glassy";
@@ -89,7 +84,7 @@ static volatile LONG g_visible;
 static volatile LONG g_size    = LENS_DEF;
 static volatile LONG g_zoomQ   = ZOOM_DEF_Q;
 static volatile LONG g_ctrlOnly = 0;
-static volatile LONG g_hideCap = 0;   // 1: hide the lens from screenshots/streams
+static volatile LONG g_affOk   = 1;   // 0: this Windows build cannot exclude the lens from capture
 static BOOL g_toastOn;
 static int  g_toastAlpha;
 static UINT g_wmTaskbar;
@@ -131,7 +126,6 @@ static void LoadSettings(void) {
     g_size     = Clamp((LONG)GetDw(k, L"Size", LENS_DEF), LENS_MIN, LENS_MAX);
     g_zoomQ    = Clamp((LONG)GetDw(k, L"ZoomQ", ZOOM_DEF_Q), ZOOM_MIN_Q, ZOOM_MAX_Q);
     g_ctrlOnly = GetDw(k, L"CtrlOnly", 0) ? 1 : 0;
-    g_hideCap  = GetDw(k, L"HideCapture", 0) ? 1 : 0;
     RegCloseKey(k);
 }
 static void SaveSettings(void) {
@@ -140,7 +134,6 @@ static void SaveSettings(void) {
     SetDw(k, L"Size", (DWORD)g_size);
     SetDw(k, L"ZoomQ", (DWORD)g_zoomQ);
     SetDw(k, L"CtrlOnly", (DWORD)g_ctrlOnly);
-    SetDw(k, L"HideCapture", (DWORD)g_hideCap);
     RegCloseKey(k);
 }
 
@@ -369,18 +362,24 @@ static void LensRender(void) {
     UpdateLayeredWindow(g_lens, NULL, &dst, &s, g_dcLens, &srcp, 0, &bf, ULW_ALPHA);
 }
 
+// The lens is ALWAYS excluded from screen capture (GDI BitBlt, screenshots, recordings, streams).
+// Glassy captures the screen under the lens itself; if the lens window were part of that capture,
+// the lens would magnify itself and show lenses nested inside lenses (this happens on Windows 10,
+// where GDI captures layered windows). WDA_EXCLUDEFROMCAPTURE needs Windows 10 version 2004 or later.
+static void ExcludeLensFromCapture(HWND h) {
+    if (SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE)) InterlockedExchange(&g_affOk, 1);
+    else InterlockedExchange(&g_affOk, 0);
+}
+
 static LRESULT CALLBACK LensProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_LENS_SHOW:
+        ExcludeLensFromCapture(h);
         InterlockedExchange(&g_visible, 1);
         g_dirty = 1; LensRender();
         ShowWindow(h, SW_SHOWNOACTIVATE);
         SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         g_dirty = 1; LensRender();
-        return 0;
-    case WM_LENS_AFFIN:
-        SetWindowDisplayAffinity(h, w ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE);
-        g_dirty = 1;
         return 0;
     case WM_LENS_HIDE:
         InterlockedExchange(&g_visible, 0);
@@ -398,9 +397,7 @@ static DWORD WINAPI LensThread(LPVOID p) {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
     g_lens = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
                              L"GlassyLens", L"", WS_POPUP, 0, 0, LENS_DEF, LENS_DEF, NULL, NULL, g_inst, NULL);
-    // Default: the lens IS visible in streams and screenshots. Our own capture does not use CAPTUREBLT,
-    // so it skips layered windows (including the lens) and no feedback loop can occur.
-    SetWindowDisplayAffinity(g_lens, g_hideCap ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE);
+    ExcludeLensFromCapture(g_lens);                             // never capture ourselves (no lens inside lens)
 
     g_dcLens = CreateCompatibleDC(NULL);
     g_dcSrc = CreateCompatibleDC(NULL);
@@ -493,7 +490,7 @@ static void SetActive(BOOL on) {
 }
 
 // ====================== Settings window ===============================
-static HWND g_tbSize, g_tbZoom, g_lblSize, g_lblZoom, g_chkStart, g_chkCtrl, g_chkCap;
+static HWND g_tbSize, g_tbZoom, g_lblSize, g_lblZoom, g_chkStart, g_chkCtrl;
 static HFONT g_font;
 
 static void UpdateLabels(void) {
@@ -535,10 +532,6 @@ static LRESULT CALLBACK SettingsProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case ID_CHKCTRL:
             InterlockedExchange(&g_ctrlOnly, SendMessageW(g_chkCtrl, BM_GETCHECK, 0, 0) == BST_CHECKED);
             SaveSettings(); break;
-        case ID_CHKCAP:
-            InterlockedExchange(&g_hideCap, SendMessageW(g_chkCap, BM_GETCHECK, 0, 0) != BST_CHECKED);
-            PostMessageW(g_lens, WM_LENS_AFFIN, (WPARAM)g_hideCap, 0);
-            SaveSettings(); break;
         case ID_BTNTEST: SetActive(!g_active); break;
         case ID_BTNCLOSE: DestroyWindow(h); break;
         }
@@ -558,7 +551,7 @@ static void OpenSettings(void) {
     int dpi = GetDpi();
 #define S(v) MulDiv((v), dpi, 96)
     DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-    RECT r = { 0, 0, S(400), S(350) };
+    RECT r = { 0, 0, S(400), S(322) };
     AdjustWindowRect(&r, style, FALSE);
     int ww = r.right - r.left, wh = r.bottom - r.top;
     int x = (GetSystemMetrics(SM_CXSCREEN) - ww) / 2, y = (GetSystemMetrics(SM_CYSCREEN) - wh) / 2;
@@ -590,15 +583,12 @@ static void OpenSettings(void) {
                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, S(20), S(198), S(360), S(24), hw, (HMENU)ID_CHKCTRL, g_inst, NULL);
     SendMessageW(g_chkCtrl, BM_SETCHECK, g_ctrlOnly ? BST_CHECKED : BST_UNCHECKED, 0);
 
-    g_chkCap = CreateWindowExW(0, L"BUTTON", L"Show the lens in screenshots and streams",
-                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, S(20), S(226), S(360), S(24), hw, (HMENU)ID_CHKCAP, g_inst, NULL);
-    SendMessageW(g_chkCap, BM_SETCHECK, g_hideCap ? BST_UNCHECKED : BST_CHECKED, 0);
     CreateWindowExW(0, L"STATIC", L"Hotkey: Ctrl+Alt+Z (toggle)\nWhile active: Shift+Wheel changes the lens size",
-                    WS_CHILD | WS_VISIBLE, S(20), S(258), S(360), S(40), hw, NULL, g_inst, NULL);
+                    WS_CHILD | WS_VISIBLE, S(20), S(232), S(360), S(40), hw, NULL, g_inst, NULL);
     CreateWindowExW(0, L"BUTTON", L"Try it (toggle)", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                    S(20), S(304), S(170), S(32), hw, (HMENU)ID_BTNTEST, g_inst, NULL);
+                    S(20), S(278), S(170), S(32), hw, (HMENU)ID_BTNTEST, g_inst, NULL);
     CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                    S(210), S(304), S(170), S(32), hw, (HMENU)ID_BTNCLOSE, g_inst, NULL);
+                    S(210), S(278), S(170), S(32), hw, (HMENU)ID_BTNCLOSE, g_inst, NULL);
 
     g_font = CreateFontW(-S(15), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
     EnumChildWindows(hw, SetFontProc, (LPARAM)g_font);
@@ -728,6 +718,11 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE hp, LPWSTR cmd, int show) {
     CreateThread(NULL, 0, LensThread, NULL, 0, NULL);
     WaitForSingleObject(g_hookReady, 5000);
     WaitForSingleObject(g_lensReady, 5000);
+
+    if (!g_affOk)
+        MessageBoxW(NULL, L"This Windows version cannot hide the lens from screen capture, so the lens may appear "
+                          L"inside itself.\n\nPlease update to Windows 10 version 2004 (build 19041) or later.",
+                    L"Glassy", MB_ICONWARNING);
 
     g_wmTaskbar = RegisterWindowMessageW(L"TaskbarCreated");
     AddTray();
