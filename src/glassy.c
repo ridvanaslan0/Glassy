@@ -1,4 +1,4 @@
-// Glassy v2.0.0 - a round "liquid glass" screen magnifier for Windows (Win32 / C, no dependencies)
+// Glassy v1.5.0 - a round "liquid glass" screen magnifier for Windows (Win32 / C, no dependencies)
 //
 // Hotkey:      Ctrl+Alt+Z toggles the lens on/off
 // While on:    Mouse wheel = zoom, Shift+Wheel = lens size
