@@ -3,6 +3,7 @@
 A tiny, fast, round screen magnifier for Windows with a **liquid glass** edge.
 Press a hotkey, a glass lens follows your cursor, scroll the mouse wheel to zoom.
 
+
 [![Build](https://github.com/ridvanaslan0/glassy/actions/workflows/build.yml/badge.svg)](https://github.com/ridvanaslan0/glassy/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -18,7 +19,7 @@ Press a hotkey, a glass lens follows your cursor, scroll the mouse wheel to zoom
 - **Global hotkey** `Ctrl+Alt+Z` to turn the lens on and off.
 - **On-screen notification**: a small toast with a green or red dot says whether Glassy is ON or OFF.
 - **Starts with Windows** (optional, enabled on first run, easy to turn off).
-- **Visible in screenshots and Discord streams** by default (can be hidden with one checkbox).
+- **Never captures itself**: the lens is hidden from screen capture, so there is no lens-inside-lens effect on Windows 10 or 11. It does not appear in screenshots or recordings.
 - **Settings window** and tray menu for lens size, zoom level and options. Settings are saved automatically.
 - **Tiny and dependency-free**: one C file, about 40 KB, no runtime or installer needed.
 - **Idle-friendly**: no CPU use while the lens is off, and almost none while nothing on screen changes.
@@ -31,7 +32,7 @@ Press a hotkey, a glass lens follows your cursor, scroll the mouse wheel to zoom
 
 Windows SmartScreen may warn about an unknown publisher because the executable is not code-signed. Choose **More info**, then **Run anyway**. You can also build it yourself, see below.
 
-**Requirements:** Windows 10 or Windows 11, 64-bit. The option to hide the lens from screenshots needs Windows 10 version 2004 or later.
+**Requirements:** Windows 10 version 2004 (build 19041) or later, or Windows 11, 64-bit. Older Windows 10 builds cannot hide the lens from screen capture, so Glassy shows a warning and the lens may appear inside itself there.
 
 ## Usage
 
@@ -54,7 +55,6 @@ While the lens is on, the mouse wheel is captured for zooming everywhere. If you
 | Zoom level | 2.5x | Magnification used when the lens opens |
 | Run at Windows startup | On | Adds or removes a per-user startup entry (no admin rights needed) |
 | Zoom with the wheel only while Ctrl is held | Off | Lets the wheel scroll normally unless Ctrl is pressed |
-| Show the lens in screenshots and streams | On | Turn off to hide the lens from screen capture |
 
 Settings live in the registry under `HKEY_CURRENT_USER\Software\Glassy`. To remove everything, turn off startup in the settings, exit Glassy, delete `Glassy.exe` and delete that registry key.
 
@@ -111,7 +111,7 @@ release/                prebuilt Glassy.exe for convenience
 
 - **"The Ctrl+Alt+Z hotkey is already in use"**: another program owns that shortcut. Close it, or change `HOTKEY_MOD` and `HOTKEY_VK` at the top of `src/glassy.c` and rebuild.
 - **The tray icon is missing**: check the `^` overflow area of the taskbar and drag the icon out to pin it.
-- **The lens looks like an endless tunnel**: this means the lens is capturing itself. Turn off **Show the lens in screenshots and streams** in the settings and please open an issue.
+- **The lens looks like an endless tunnel (lens inside lens)**: this means the lens is capturing itself. Glassy hides the lens from capture to prevent this, which needs Windows 10 version 2004 (build 19041) or later. Update Windows, or open an issue if it still happens.
 
 ## Contributing
 
